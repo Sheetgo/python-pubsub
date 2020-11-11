@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from __future__ import absolute_import
-
 import datetime as dt
 import json
 import math
@@ -21,6 +20,47 @@ import pytz
 import time
 
 from google.cloud.pubsub_v1.subscriber._protocol import requests
+
+
+# ----------------------------------- SHEETGO -------------------------------- #
+import logging
+import traceback
+import sys
+from pythonjsonlogger import jsonlogger
+
+
+class _MaxLevelFilter(object):
+    def __init__(self, highest_log_level):
+        self._highest_log_level = highest_log_level
+
+    def filter(self, log_record):
+        return log_record.levelno <= self._highest_log_level
+
+
+class StackdriverJsonFormatter(jsonlogger.JsonFormatter, object):
+    def __init__(self, fmt="%(asctime)s %(filename)s %(funcName)s %(lineno)d %(processName)s %(threadName)s %(levelname) %(message)", style='%', *args, **kwargs):
+        jsonlogger.JsonFormatter.__init__(self, fmt=fmt, *args, **kwargs)
+
+    def process_log_record(self, log_record):
+        log_record['severity'] = log_record['levelname']
+        del log_record['levelname']
+        return super(StackdriverJsonFormatter, self).process_log_record(log_record)
+
+
+formatter = StackdriverJsonFormatter()
+
+logger = logging.getLogger()
+# A handler for low level logs that should be sent to STDOUT
+info_handler = logging.StreamHandler(sys.stdout)
+info_handler.setFormatter(formatter)
+
+logger.setLevel(logging.INFO)
+
+# info_handler.addFilter(_MaxLevelFilter(logging.ERROR))
+logger.handlers = []
+logger.addHandler(info_handler)
+# ----------------------------------- SHEETGO -------------------------------- #
+
 
 
 _MESSAGE_REPR = """\
@@ -216,6 +256,15 @@ class Message(object):
             ensure that your processing code is idempotent, as you may
             receive any given message more than once.
         """
+        try:
+            message_data = json.loads(self.data)
+            task_db_id = message_data.get("task_db_id")
+            call_stack = "\n".join(traceback.format_stack())
+            log_message = f'ACKING MESSAGE. TASK DB ID: {task_db_id} | MESSAGE: {self._data} Call Stack: {call_stack}'
+            logger.info(log_message)
+        except Exception as e:
+            pass
+
         time_to_ack = math.ceil(time.time() - self._received_timestamp)
         self._request_queue.put(
             requests.AckRequest(
